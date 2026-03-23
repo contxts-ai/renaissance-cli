@@ -167,3 +167,41 @@ def agent_status(
         na.append({"command": f"ren pipeline cancel {workflow_id}", "description": "Cancel"})
 
     ok(result=data, next_actions=na, human_text=f"[{workflow_id}] {status}")
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+@agent_app.command("schema")
+def agent_schema(
+    agent_name: str = typer.Argument(help="Agent name"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Show input schema for an agent (auto-injected fields excluded).
+
+    Returns the projected JSON Schema for user-settable fields only.
+    """
+    setup(output, quiet)
+    data = api_get(f"/capabilities/{agent_name}/schema")
+
+    schema = data.get("input_schema", {})
+    props = schema.get("properties", {})
+    required = set(schema.get("required", []))
+
+    lines = [f"Agent: {agent_name}", "", "Input fields:"]
+    for field_name, field_def in props.items():
+        ftype = field_def.get("type", "any")
+        req = " (required)" if field_name in required else ""
+        lines.append(f"  {field_name}: {ftype}{req}")
+
+    ok(
+        result=data,
+        next_actions=[
+            {"command": f"ren agent run {agent_name} --target ...", "description": "Run this agent"},
+            {"command": "ren capability list --kind agent", "description": "List all agents"},
+        ],
+        human_text="\n".join(lines),
+    )

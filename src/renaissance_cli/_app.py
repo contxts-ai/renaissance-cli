@@ -6,7 +6,9 @@ import typer
 
 from renaissance_cli.commands.agent import agent_app
 from renaissance_cli.commands.ambient import ambient_app
+from renaissance_cli.commands.artifact import artifact_app
 from renaissance_cli.commands.auth import auth_app
+from renaissance_cli.commands.capability import capability_app
 from renaissance_cli.commands.eval import eval_app
 from renaissance_cli.commands.execute import execute_app
 from renaissance_cli.commands.metrics import metrics_app
@@ -24,7 +26,9 @@ app = typer.Typer(
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(ambient_app, name="ambient")
+app.add_typer(artifact_app, name="artifact")
 app.add_typer(auth_app, name="auth")
+app.add_typer(capability_app, name="capability")
 app.add_typer(eval_app, name="eval")
 app.add_typer(execute_app, name="execute")
 app.add_typer(metrics_app, name="metrics")

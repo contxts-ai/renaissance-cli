@@ -987,3 +987,90 @@ def replay_from(
         ],
         human_text=f"Replayed from {step_id}: {workflow_id} -> {new_id}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic launch (schema-driven)
+# ---------------------------------------------------------------------------
+
+
+@pipeline_app.command("launch-dynamic")
+def launch_dynamic(
+    name: str = typer.Argument(help="Capability name (workflow, template, or agent)"),
+    json_file: str = typer.Option(None, "--json-file", "-f", help="Path to JSON body file"),
+    json_str: str = typer.Option(None, "--json-str", "-j", help="Inline JSON body string"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Launch any capability by name using schema-driven discovery.
+
+    Fetches the input schema, validates required fields, and POSTs to
+    the capability's launch endpoint. Use --json-file or --json-str.
+
+    Examples:
+        ren pipeline launch-dynamic ralph-loop --json-str '{"target": "test"}'
+        ren pipeline launch-dynamic coding --json-file ./config.json
+    """
+    setup(output, quiet)
+
+    # 1. Fetch schema
+    schema_data = api_get(f"/capabilities/{name}/schema")
+    launch_endpoint = schema_data.get("launch_endpoint")
+    if not launch_endpoint:
+        from renaissance_cli._output import ExitCode, fail
+        fail("BAD_REQUEST", f"No launch_endpoint for '{name}'", exit_code=ExitCode.USAGE_ERROR)
+        return
+
+    # 2. Parse body
+    body: dict = {}
+    if json_file:
+        try:
+            with open(json_file) as f:
+                body = json.load(f)
+        except Exception as e:
+            from renaissance_cli._output import ExitCode, fail
+            fail("BAD_REQUEST", f"Cannot read JSON file: {e}", exit_code=ExitCode.USAGE_ERROR)
+            return
+    elif json_str:
+        try:
+            body = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            from renaissance_cli._output import ExitCode, fail
+            fail("BAD_REQUEST", f"Invalid JSON: {e}", exit_code=ExitCode.USAGE_ERROR)
+            return
+    else:
+        from renaissance_cli._output import ExitCode, fail
+        fail("BAD_REQUEST", "Provide --json-file or --json-str", exit_code=ExitCode.USAGE_ERROR)
+        return
+
+    # 3. Lightweight required-field check
+    input_schema = schema_data.get("input_schema", {})
+    required = set(input_schema.get("required", []))
+    missing = required - set(body.keys())
+    if missing:
+        from renaissance_cli._output import ExitCode, fail
+        fail("BAD_REQUEST", f"Missing required fields: {', '.join(sorted(missing))}", exit_code=ExitCode.USAGE_ERROR)
+        return
+
+    # 4. For agents, wrap body with agent_name
+    kind = schema_data.get("kind")
+    if kind == "agent":
+        body["agent_name"] = name
+
+    # 5. For templates, wrap with template name
+    if kind == "template":
+        body["template"] = name
+
+    logger.info("Dynamic launch: %s -> %s", name, launch_endpoint)
+    data = api_post(launch_endpoint, body)
+    wf_id = data.get("workflow_id", "unknown")
+
+    ok(
+        result=data,
+        next_actions=[
+            {"command": f"ren pipeline progress {wf_id}", "description": "Check progress"},
+            {"command": f"ren pipeline progress {wf_id} --watch", "description": "Watch live"},
+            {"command": f"ren pipeline cancel {wf_id}", "description": "Cancel"},
+        ],
+        human_text=f"Launched {name}: {wf_id}",
+    )
