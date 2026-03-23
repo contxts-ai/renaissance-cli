@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 import time
 
@@ -12,6 +14,7 @@ from renaissance_cli._output import (
     OutputFormat,
     OutputOpt,
     QuietOpt,
+    YesOpt,
     emit,
     logger,
     ok,
@@ -155,6 +158,126 @@ def orchestrate(
             {"command": f"ren pipeline cancel {wf_id}", "description": "Cancel"},
         ],
         human_text=f"Orchestration launched: {wf_id}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ralph Loop
+# ---------------------------------------------------------------------------
+
+
+@pipeline_app.command("ralph-spec")
+def ralph_spec(
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Show FunctionSpec schema, required fields, and examples for Ralph Loop.
+
+    Returns JSON schema with examples. Use to construct a valid --spec file.
+    Requires: Trigger API running.
+    """
+    setup(output, quiet)
+    data = api_get("/pipeline/ralph-loop/spec-schema")
+
+    lines = ["Required: " + ", ".join(data.get("required_minimal", []))]
+    lines.append(f"Kinds: {', '.join(data.get('component_kinds', []))}")
+    for ex in data.get("examples", []):
+        lines.append(f"\nExample ({ex['label']}):")
+        lines.append(json.dumps(ex["spec"], indent=2))
+    ok(result=data, next_actions=data.get("next_actions", []), human_text="\n".join(lines))
+
+
+def _slugify(text: str) -> str:
+    """Convert text to a valid function name / ID slug."""
+    s = re.sub(r"[^a-zA-Z0-9_\s-]", "", text.lower().strip())
+    s = re.sub(r"[\s-]+", "_", s)
+    return s[:60] or "unnamed"
+
+
+@pipeline_app.command("launch-ralph")
+def launch_ralph(
+    target: str = typer.Option(..., "--target", "-t", help="Target identifier"),
+    spec_file: str = typer.Option(None, "--spec", "-s", help="Path to function_spec JSON file"),
+    describe: str = typer.Option(None, "--describe", "-d", help="Natural language description (auto-generates minimal spec)"),
+    name: str = typer.Option(None, "--name", "-n", help="Function name (with --describe)"),
+    kind: str = typer.Option("generic", "--kind", "-k", help="Component kind (generic, ingestion, signal, ...)"),
+    max_iter: int = typer.Option(8, "--max-iter", help="Max convergence iterations (1-20)"),
+    threshold: float = typer.Option(0.85, "--threshold", help="Convergence score threshold (0.0-1.0)"),
+    no_pause: bool = typer.Option(False, "--no-pause", help="Skip plan review HITL gate"),
+    yes: bool = YesOpt,
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Launch a Ralph Loop convergence pipeline (code -> verify -> critique -> converge).
+
+    Three modes:
+    1. --spec path/to/spec.json: Full FunctionSpec file
+    2. --describe "..." --name fn: Auto-generate minimal spec from description
+    3. Neither: Run coding-planner first (requires target with upstream data)
+
+    Returns workflow_id. Use --output json for structured result.
+    Side effects: starts a Temporal workflow, generates code, may create PRs.
+
+    Examples:
+        ren pipeline launch-ralph -t test --describe "Add two numbers" --name add_numbers
+        ren pipeline launch-ralph -t myproject --spec ./my_spec.json
+        ren pipeline launch-ralph -t wstETH
+    """
+    setup(output, quiet)
+
+    body: dict = {
+        "target": target,
+        "max_iterations": max_iter,
+        "convergence_threshold": threshold,
+        "pause_after_plan": not no_pause,
+    }
+
+    if spec_file:
+        # Mode 1: spec file
+        try:
+            with open(spec_file) as f:
+                spec = json.load(f)
+        except Exception as e:
+            from renaissance_cli._output import ExitCode, fail
+            fail("BAD_REQUEST", f"Cannot read spec file: {e}", exit_code=ExitCode.USAGE_ERROR)
+            return
+        body["function_spec"] = spec
+        logger.info("Using spec from %s", spec_file)
+
+    elif describe:
+        # Mode 2: auto-generate minimal spec
+        fn_name = _slugify(name or describe[:40])
+        spec = {
+            "function_id": fn_name,
+            "function_name": fn_name,
+            "description": describe,
+            "component_kind": kind,
+            "promotion_mode": "workspace_only",
+        }
+
+        if not yes and sys.stdout.isatty():
+            typer.echo("Generated spec:")
+            typer.echo(json.dumps(spec, indent=2))
+            typer.confirm("Launch with this spec?", abort=True)
+
+        body["function_spec"] = spec
+        logger.info("Generated minimal spec: %s", fn_name)
+
+    else:
+        # Mode 3: coding-planner (needs upstream data)
+        logger.info("No --spec or --describe — will run coding-planner for %s", target)
+
+    data = api_post("/pipeline/ralph-loop", body)
+    wf_id = data.get("workflow_id", "unknown")
+
+    ok(
+        result=data,
+        next_actions=[
+            {"command": f"ren pipeline progress {wf_id}", "description": "Watch progress"},
+            {"command": f"ren pipeline progress {wf_id} --watch", "description": "Live monitor"},
+            {"command": f"ren pipeline cancel {wf_id}", "description": "Cancel"},
+        ],
+        human_text=f"Ralph Loop launched: {wf_id}",
     )
 
 
