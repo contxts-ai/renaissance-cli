@@ -68,9 +68,28 @@ def _claude_post(path: str, body: dict) -> dict:
     return {}
 
 
-def _claude_get(path: str) -> dict:
+def _claude_get(path: str, params: dict | None = None) -> dict:
     try:
-        r = _get_claude_client().get(path)
+        r = _get_claude_client().get(path, params=params)
+        r.raise_for_status()
+        return r.json()
+    except httpx.ConnectError:
+        url = get_claude_server_url()
+        fail("CONNECTION_ERROR", f"Cannot reach Claude Server at {url}",
+             fix=f"Run: ren auth login --claude-url <URL>  (current: {url})",
+             exit_code=ExitCode.CONNECTION_ERROR)
+    except httpx.HTTPStatusError as exc:
+        try:
+            detail = exc.response.json().get("detail", str(exc))
+        except Exception:
+            detail = str(exc)
+        fail("SERVER_ERROR", f"HTTP {exc.response.status_code}: {detail}", exit_code=ExitCode.GENERAL_ERROR)
+    return {}
+
+
+def _claude_delete(path: str) -> dict:
+    try:
+        r = _get_claude_client().delete(path)
         r.raise_for_status()
         return r.json()
     except httpx.ConnectError:
@@ -183,3 +202,64 @@ def execute_status(
         if not quiet:
             logger.info("Task %s: %s ...", task_id, task_status)
         time.sleep(interval)
+
+
+# ---------------------------------------------------------------------------
+# List & Cancel
+# ---------------------------------------------------------------------------
+
+
+@execute_app.command("list")
+def execute_list(
+    status_filter: str = typer.Option(None, "--status", "-s", help="Filter by status (pending|running|completed|failed)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """List all prompt execution tasks on Claude Server.
+
+    Returns task IDs, statuses, and creation times.
+    """
+    setup(output, quiet)
+    params: dict = {"limit": limit}
+    if status_filter:
+        params["status"] = status_filter
+    data = _claude_get("/execute", params=params)
+    tasks = data.get("tasks", data if isinstance(data, list) else [])
+
+    lines = [f"Tasks ({len(tasks)}):"]
+    for t in tasks:
+        tid = t.get("task_id", "?")
+        ts = t.get("status", "?")
+        lines.append(f"  {tid:<40s} {ts}")
+
+    na: list[dict] = []
+    if tasks:
+        first = tasks[0].get("task_id", "?")
+        na.append({"command": f"ren execute status {first}", "description": "Check first task"})
+
+    ok(result={"tasks": tasks, "count": len(tasks)}, next_actions=na, human_text="\n".join(lines))
+
+
+@execute_app.command("cancel")
+def execute_cancel(
+    task_id: str = typer.Argument(help="Task ID to cancel"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-confirm"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Cancel a running execution task on Claude Server.
+
+    Side effects: terminates the running Claude execution.
+    """
+    setup(output, quiet)
+    if not yes and sys.stdout.isatty():
+        typer.confirm(f"Cancel task {task_id}?", abort=True)
+    data = _claude_delete(f"/execute/{task_id}")
+    ok(
+        result=data,
+        next_actions=[
+            {"command": "ren execute list", "description": "List remaining tasks"},
+        ],
+        human_text=f"Task cancelled: {task_id}",
+    )
