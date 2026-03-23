@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import typer
 
+from renaissance_cli.commands.agent import agent_app
+from renaissance_cli.commands.auth import auth_app
+from renaissance_cli.commands.execute import execute_app
 from renaissance_cli.commands.metrics import metrics_app
 from renaissance_cli.commands.pipeline import pipeline_app
 from renaissance_cli.commands.schedule import schedule_app
@@ -16,6 +19,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+app.add_typer(agent_app, name="agent")
+app.add_typer(auth_app, name="auth")
+app.add_typer(execute_app, name="execute")
 app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(template_app, name="template")
