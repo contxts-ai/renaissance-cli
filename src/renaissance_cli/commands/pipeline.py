@@ -85,6 +85,79 @@ def launch_research(
     )
 
 
+@pipeline_app.command("launch-coding")
+def launch_coding(
+    target: str = typer.Option(..., "--target", help="Coding target"),
+    pause: bool = typer.Option(True, "--pause/--no-pause", help="Pause between steps"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Launch a coding pipeline (code generation + review + PR).
+
+    Side effects: creates a coding workflow, may generate PRs.
+    """
+    setup(output, quiet)
+    data = api_post("/pipeline/coding", {"target": target, "pause_between_steps": pause})
+    wf_id = data.get("workflow_id", "unknown")
+    ok(
+        result=data,
+        next_actions=[
+            {"command": f"ren pipeline progress {wf_id}", "description": "Watch progress"},
+            {"command": f"ren pipeline cancel {wf_id}", "description": "Cancel"},
+        ],
+        human_text=f"Coding pipeline launched: {wf_id}",
+    )
+
+
+@pipeline_app.command("launch-forge")
+def launch_forge(
+    skill: str = typer.Option(..., "--skill", help="Skill name to improve"),
+    pause: bool = typer.Option(True, "--pause/--no-pause", help="Pause between steps"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Launch skill-forge (iterative skill test + eval + improve loop).
+
+    Side effects: modifies skill files, runs evals.
+    """
+    setup(output, quiet)
+    data = api_post("/pipeline/skill-forge", {"target": skill, "pause_between_steps": pause})
+    wf_id = data.get("workflow_id", "unknown")
+    ok(
+        result=data,
+        next_actions=[
+            {"command": f"ren pipeline progress {wf_id}", "description": "Watch progress"},
+            {"command": f"ren pipeline cancel {wf_id}", "description": "Cancel"},
+        ],
+        human_text=f"Skill-forge launched: {wf_id}",
+    )
+
+
+@pipeline_app.command("orchestrate")
+def orchestrate(
+    goal: str = typer.Option(..., "--goal", help="Free-form goal description"),
+    target: str = typer.Option(..., "--target", help="Target identifier"),
+    output: OutputFormat = OutputOpt,
+    quiet: bool = QuietOpt,
+) -> None:
+    """Launch a goal-driven orchestration pipeline.
+
+    The orchestrator selects and composes skills to achieve the goal.
+    Side effects: creates a custom workflow based on the goal.
+    """
+    setup(output, quiet)
+    data = api_post("/pipeline/orchestrate", {"goal": goal, "target": target})
+    wf_id = data.get("workflow_id", "unknown")
+    ok(
+        result=data,
+        next_actions=[
+            {"command": f"ren pipeline progress {wf_id}", "description": "Watch progress"},
+            {"command": f"ren pipeline cancel {wf_id}", "description": "Cancel"},
+        ],
+        human_text=f"Orchestration launched: {wf_id}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Progress
 # ---------------------------------------------------------------------------

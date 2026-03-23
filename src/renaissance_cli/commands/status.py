@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import typer
-
-import os
-
 from renaissance_cli._client import api_get
+from renaissance_cli._config import get_trigger_url
 from renaissance_cli._output import OutputFormat, OutputOpt, QuietOpt, ok, setup
 
 
@@ -20,7 +17,7 @@ def status(
     Use --output json for structured result.
     """
     setup(output, quiet)
-    trigger_url = os.getenv("TRIGGER_URL", "http://localhost:58100")
+    trigger_url = get_trigger_url()
     data = api_get("/health")
     ok(
         result={"trigger_url": trigger_url, **data},
