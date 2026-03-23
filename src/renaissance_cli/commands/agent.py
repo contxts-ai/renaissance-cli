@@ -76,6 +76,7 @@ def agent_list(
 def agent_run(
     agent_name: str = typer.Argument(help="Agent name (e.g. artifact-agent, freshness-monitor)"),
     target: str = typer.Option("", "--target", "-t", help="Target identifier (e.g. wstETH)"),
+    prompt: str = typer.Option("", "--prompt", help="Custom prompt (overrides default agent prompt)"),
     param: list[str] = typer.Option([], "--param", "-p", help="Extra param as key=value (repeatable)"),
     watch: bool = typer.Option(False, "--watch", "-w", help="Poll progress until completion"),
     interval: int = typer.Option(5, "--interval", help="Polling interval in seconds (with --watch)"),
@@ -97,6 +98,8 @@ def agent_run(
     body: dict = {"agent_name": agent_name}
     if target:
         body["target"] = target
+    if prompt:
+        body["prompt"] = prompt
 
     # Parse --param key=value pairs
     for p in param:
