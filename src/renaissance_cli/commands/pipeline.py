@@ -46,11 +46,30 @@ def launch(
     """
     setup(output, quiet)
     logger.info("Launching pipeline: template=%s target=%s", template, target)
-    data = api_post("/pipeline/from-template", {
-        "template": template,
-        "target": target,
-        "pause_between_steps": pause,
-    })
+
+    # Resolve the correct endpoint for this template.
+    # Some templates have dedicated endpoints that differ from /pipeline/from-template.
+    _DEDICATED_ENDPOINTS: dict[str, str] = {
+        "research-pipeline": "/pipeline/research",
+        "skill-forge": "/pipeline/skill-forge",
+    }
+
+    endpoint = _DEDICATED_ENDPOINTS.get(template, "/pipeline/from-template")
+    if endpoint == "/pipeline/from-template" and template not in _DEDICATED_ENDPOINTS:
+        # Check generated workflow registry as fallback
+        try:
+            templates_data = api_get("/pipelines/templates")
+            for t in templates_data.get("templates", []):
+                if t.get("name") == template and t.get("endpoint", "").startswith("/pipeline/generated/"):
+                    endpoint = t["endpoint"]
+                    break
+        except Exception:
+            pass
+
+    body: dict = {"target": target, "pause_between_steps": pause}
+    if endpoint == "/pipeline/from-template":
+        body["template"] = template
+    data = api_post(endpoint, body)
     wf_id = data.get("workflow_id", "unknown")
     ok(
         result=data,
