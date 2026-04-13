@@ -61,9 +61,16 @@ def api_get(path: str, params: dict | None = None, timeout: float = 30.0) -> dic
     return {}
 
 
-def api_post(path: str, body: dict | None = None, timeout: float = 30.0) -> dict:
+def api_post(
+    path: str,
+    body: dict | None = None,
+    timeout: float = 30.0,
+    headers: dict[str, str] | None = None,
+) -> dict:
     try:
-        r = _get_client().post(path, json=body or {}, timeout=timeout)
+        r = _get_client().post(
+            path, json=body or {}, timeout=timeout, headers=headers or None,
+        )
         r.raise_for_status()
         return r.json()
     except httpx.ConnectError:
