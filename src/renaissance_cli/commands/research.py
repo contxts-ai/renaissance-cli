@@ -15,12 +15,16 @@ from pathlib import Path
 
 import typer
 
+import json
+import sys
+
 from renaissance_cli._client import api_get, api_post
 from renaissance_cli._output import (
     ExitCode,
     OutputFormat,
     OutputOpt,
     QuietOpt,
+    _resolve_format,
     emit,
     fail,
     logger,
@@ -85,6 +89,33 @@ def _result(env: dict) -> dict:
 def _print_envelope_passthrough(env: dict, human_text: str | None = None) -> None:
     """Forward PB's envelope through ren's emit so next_actions survive."""
     result = _result(env)
+    next_actions = env.get("next_actions") or []
+    ok(result=result, next_actions=next_actions, human_text=human_text)
+
+
+def _print_streaming_passthrough(
+    env: dict,
+    human_text: str | None = None,
+) -> None:
+    """Stream a list-shaped ``result`` as one JSON per line in jsonl mode.
+
+    Behavior by output format:
+    - ``jsonl`` and ``result`` is a list  → one JSON per line (no envelope).
+    - ``jsonl`` and ``result`` is a dict  → falls back to envelope-on-one-line.
+    - ``json``                            → full envelope (single object).
+    - ``text``                            → human_text or pretty-printed envelope.
+
+    Use this for surfaces the plan §"Output contract" calls out as streaming:
+    ``timeline``, ``traces``, ``runs list``, ``artifacts list``.
+    """
+    result = _result(env)
+    fmt = _resolve_format(None)
+    if fmt == OutputFormat.jsonl and isinstance(result, list):
+        for item in result:
+            json.dump(item, sys.stdout, ensure_ascii=False)
+            print()
+        sys.stdout.flush()
+        return
     next_actions = env.get("next_actions") or []
     ok(result=result, next_actions=next_actions, human_text=human_text)
 
@@ -247,7 +278,12 @@ def timeline(
     output: OutputFormat = OutputOpt,
     quiet: bool = QuietOpt,
 ) -> None:
-    """Print recent run events (newest last)."""
+    """Print recent run events (newest last).
+
+    Output: ``--output jsonl`` streams one event per line (NDJSON);
+    ``--output json`` returns the full envelope; default text mode
+    pretty-prints. Use jsonl when piping to ``jq`` or another consumer.
+    """
     setup(output, quiet)
     params = [f"limit={limit}"]
     if run_id:
@@ -255,7 +291,7 @@ def timeline(
     if phase:
         params.append(f"phase={phase}")
     env = api_get(f"/research/runs/{task}/timeline?" + "&".join(params))
-    _print_envelope_passthrough(env)
+    _print_streaming_passthrough(env)
 
 
 @research_app.command("runs")
@@ -264,10 +300,14 @@ def runs_list(
     output: OutputFormat = OutputOpt,
     quiet: bool = QuietOpt,
 ) -> None:
-    """Enumerate all runs for a task."""
+    """Enumerate all runs for a task.
+
+    Output: ``--output jsonl`` streams one run summary per line; otherwise
+    returns the full envelope.
+    """
     setup(output, quiet)
     env = api_get(f"/research/tasks/{task}/runs")
-    _print_envelope_passthrough(env)
+    _print_streaming_passthrough(env)
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +396,10 @@ def artifacts_list(
     output: OutputFormat = OutputOpt,
     quiet: bool = QuietOpt,
 ) -> None:
-    """Enumerate artifacts in a run (default: present-only, all phases)."""
+    """Enumerate artifacts in a run (default: present-only, all phases).
+
+    Output: ``--output jsonl`` streams one record per line; otherwise full envelope.
+    """
     setup(output, quiet)
     params: list[str] = []
     if run_id:
@@ -367,7 +410,7 @@ def artifacts_list(
         params.append("present_only=false")
     qs = ("?" + "&".join(params)) if params else ""
     env = api_get(f"/research/runs/{task}/artifacts{qs}")
-    _print_envelope_passthrough(env)
+    _print_streaming_passthrough(env)
 
 
 @research_app.command("traces")

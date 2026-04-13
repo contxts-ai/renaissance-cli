@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import httpx
 
 from renaissance_cli._config import get_trigger_api_key, get_trigger_url
@@ -21,6 +25,29 @@ def _get_client() -> httpx.Client:
     return _client
 
 
+def _auth_source_hint() -> tuple[bool, str]:
+    """Return (key_present, hint_string) describing where the API key would come from.
+
+    Resolution order matches `_config.get`: env var > config file > default ("").
+    The hint names the *first* source that would supply a key, or — if none
+    does — the canonical place the user should set one.
+    """
+    if os.getenv("TRIGGER_API_KEY"):
+        return True, "TRIGGER_API_KEY env var"
+    config_file = Path.home() / ".config" / "renaissance" / "cli.json"
+    if config_file.exists():
+        try:
+            data = json.loads(config_file.read_text())
+            if data.get("trigger_api_key"):
+                return True, f"trigger_api_key in {config_file}"
+        except (json.JSONDecodeError, OSError):
+            pass
+    return False, (
+        f"set TRIGGER_API_KEY env var, or run "
+        f"`ren auth login --url <URL> --key <KEY>` to write it to {config_file}"
+    )
+
+
 def _handle_error(exc: httpx.HTTPStatusError) -> None:
     status = exc.response.status_code
     try:
@@ -31,9 +58,23 @@ def _handle_error(exc: httpx.HTTPStatusError) -> None:
     if status == 400:
         fail("BAD_REQUEST", str(detail), exit_code=ExitCode.USAGE_ERROR)
     elif status == 401:
-        fail("AUTH_ERROR", "Authentication failed",
-             fix="Run: ren auth login --url <URL> --key <KEY>",
-             exit_code=ExitCode.AUTH_ERROR)
+        key_present, hint = _auth_source_hint()
+        if key_present:
+            fail(
+                "AUTH_ERROR",
+                f"Server rejected the API key (source: {hint}). "
+                "The key is reaching the server but does not match what the server expects.",
+                fix="Verify the key against the server's TRIGGER_API_KEY, then "
+                    "`ren auth login --url <URL> --key <KEY>` to update local config.",
+                exit_code=ExitCode.AUTH_ERROR,
+            )
+        else:
+            fail(
+                "AUTH_ERROR",
+                f"No API key configured for {get_trigger_url()}. {hint}.",
+                fix="ren auth login --url <URL> --key <KEY>",
+                exit_code=ExitCode.AUTH_ERROR,
+            )
     elif status == 404:
         fail("NOT_FOUND", str(detail), fix="Check the resource ID", exit_code=ExitCode.NOT_FOUND)
     elif status == 409:
@@ -44,8 +85,19 @@ def _handle_error(exc: httpx.HTTPStatusError) -> None:
 
 def _connection_error() -> None:
     url = get_trigger_url()
-    fail("CONNECTION_ERROR", f"Cannot reach {url}",
-         fix=f"Run: ren auth login --url <URL> --key <KEY> (current: {url})",
+    is_local = "localhost" in url or "127.0.0.1" in url
+    if is_local:
+        fix = (
+            "Trigger appears to be down. Start it with `restart-trigger` "
+            "(launchd alias), or override with TRIGGER_URL env var to point "
+            "at a remote instance."
+        )
+    else:
+        fix = (
+            f"Verify {url} is reachable from this host. If wrong, run "
+            "`ren auth login --url <URL> --key <KEY>` or set TRIGGER_URL."
+        )
+    fail("CONNECTION_ERROR", f"Cannot reach {url}", fix=fix,
          exit_code=ExitCode.CONNECTION_ERROR)
 
 
