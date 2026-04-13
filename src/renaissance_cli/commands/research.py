@@ -129,7 +129,7 @@ def _print_streaming_passthrough(
 def submit(
     task: str = TaskOpt,
     market: str = typer.Option(..., "--market", "-m", help="Morpho Blue market id"),
-    question: str = typer.Option(..., "--question", "-q", help="Research question"),
+    question: str = typer.Option(..., "--question", help="Research question"),
     max_iterations: int = typer.Option(10, "--max-iterations"),
     idempotency_key: str = IdemOpt,
     output: OutputFormat = OutputOpt,
